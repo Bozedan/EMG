@@ -1,51 +1,51 @@
-#include <avdweb_AnalogReadFast.h>
+#include "avdweb_AnalogReadFast.h"
 
-int max_analog_dta = 300;
-int min_analog_dta = 100;
-int static_analog_dta = 0;
+#define BUFFER 1500    // кол-во точек для записи
 
-int getAnalog(int pin) {
-    long sum = 0;
-    for (int i = 0; i < 32; i++) {
-        sum += analogReadFast(pin);
-    }
-    int dta = sum >> 5;
-    max_analog_dta = max(dta, max_analog_dta);
-    min_analog_dta = min(dta, min_analog_dta);
-    return dta;
-}
+
+byte val[BUFFER] = {0};   // массив для хранения считанных данных
+unsigned int i = 0;       // для подсчета точек
+
 
 void setup() {
-    Serial.begin(9600);
-    long sum = 0;
-    for (int i = 0; i <= 10; i++) {
-        for (int j = 0; j < 100; j++) {
-            sum += getAnalog(A0);
-            delayMicroseconds(100); // уменьшаем задержку
-        }
-    }
-    static_analog_dta = sum / 1100;
+  Serial.begin(115200);   // скорость UART
+ 
+  // инициализация Timer1
+  cli();                  // отключить глобальные прерывания
+  TCCR1A = 0;             // обнулить счетные регистры
+  TCCR1B = 0; 
+
+  OCR1A = 24;             // установка регистра совпадения (249 - 1мс, 24 - 100мкс, 11 - 48 мкс)
+  TCCR1B |= (1 << WGM12); // включение в CTC режим
+
+  // Установка битов CS10 и CS12 на коэффициент деления 64 (1 тик - 4мкс)
+  TCCR1B |= (1 << CS10);
+  TCCR1B |= (1 << CS11);
+  //TCCR1B |= (1 << CS12);
+
+  TIMSK1 |= (1 << OCIE1A);  // включение прерываний по совпадению
+  sei();                    // включить глобальные прерывания
 }
 
-int level = 5;
-int level_buf = 5;
-
 void loop() {
-    int val = analogReadFast(A0); // быстрый аппаратный аналоговый ввод
-    int level2;
-    if (val > static_analog_dta) {
-        level2 = 5 + map(val, static_analog_dta, max_analog_dta, 0, 5);
-    } else {
-        level2 = 5 - map(val, min_analog_dta, static_analog_dta, 0, 5);
+  // ожидаем заполнения буфера
+  if (i == BUFFER){
+    TIMSK1 &= ~(1 << OCIE1A); // выключение прерываний по совпадению
+    for(int j = 0; j < BUFFER; j++) {
+      Serial.write(val[j]);   // отправить массив данных
     }
-    if (level2 > level) {
-        level++;
-    } else if (level2 < level) {
-        level--;
-    }
-    if (level != level_buf) {
-        level_buf = level;
-    }
-    Serial.println(val);
-    delayMicroseconds(100); // уменьшаем задержку
+    Serial.write(1);Serial.write(128);Serial.write(254);   // разделитель данных
+    i = 0;    // сброс счетчика битов
+    Serial.flush();   // ожидаем отправку всех данных
+         // для более понятного отображения данных на графике, при необходимости можно убрать
+    TIMSK1 |= (1 << OCIE1A);  // включение прерываний по совпадению
+  }
+}
+    
+  // обработка прерывания по таймеру
+ISR(TIMER1_COMPA_vect)
+{
+  val[i] = analogReadFast(A0) >> 1 ;   // считываем данные с АЦП
+  Serial.println(val[i]);
+  i++;    // прибавляем счетчик
 }
